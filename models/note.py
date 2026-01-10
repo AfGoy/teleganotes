@@ -4,14 +4,12 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 
-from db import *
+from base import Base
 
-Base = declarative_base()
-
-class Quote(Base):
-    __tablename__ = "quotes"
+class Note(Base):
+    __tablename__ = "notes"
 
     id = Column(Integer, primary_key=True)
     owner = Column(String)
+    title = Column(String)
     text = Column(String, nullable=False)
-
