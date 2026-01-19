@@ -8,9 +8,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import declarative_base
 
 from settings import DB_URL
+from crypt import hash_password
 
 from base import Base
 from models.note import Note
+from models.users import User
 
 engine = create_async_engine(DB_URL)
 AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
@@ -19,6 +21,27 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+async def add_user(tg_id, name, password):
+    async with AsyncSessionLocal() as session:
+        try:
+            async with session.begin():
+                user =  User(tg_id=tg_id, name=name, password_hash=hash_password(password))
+                session.add(user)
+            return "OK"
+        
+        except SQLAlchemyError as e:
+            return f"Произошла ошибка при добавлении текста. {e}"
+
+async def get_user(tg_id):
+    async with AsyncSessionLocal() as session:
+        try:
+            async with session.begin():
+                stmt = select(User).where(User.tg_id == tg_id)
+                result = await session.execute(stmt)
+                return result.one()
+            
+        except SQLAlchemyError as e:
+            return f"Произошла ошибка базы данных. {e}"
     
 async def add_note(note_text, title, owner):
     async with AsyncSessionLocal() as session:
