@@ -73,6 +73,7 @@ async def final_start_handler(message: Message, state: FSMContext):
     
     data = await state.get_data()
     
+    await state.clear()
     await add_user(tg_id=message.from_user.id, name=data["name"], password=message.text)
 
 @dp.message(Command("cancel"))
