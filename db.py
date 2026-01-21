@@ -25,7 +25,7 @@ async def add_user(tg_id, name, password):
     async with AsyncSessionLocal() as session:
         try:
             async with session.begin():
-                user =  User(tg_id=tg_id, name=name, password_hash=hash_password(password))
+                user =  User(tg_id=tg_id, name=name, password_hash=await hash_password(password))
                 session.add(user)
             return "OK"
         
@@ -38,7 +38,7 @@ async def get_user(tg_id):
             async with session.begin():
                 stmt = select(User).where(User.tg_id == tg_id)
                 result = await session.execute(stmt)
-                return result.one()
+                return result.scalar_one_or_none()
             
         except SQLAlchemyError as e:
             return f"Произошла ошибка базы данных. {e}"

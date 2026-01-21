@@ -16,6 +16,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from db import init_db, add_note, get_list, del_data, edit_data, add_user, get_user, engine
 from settings import TK, SECRET_KEY, ENCODE
+from crypt import hash_password, verify_password
 
 cipher = Fernet(SECRET_KEY)
 
@@ -29,6 +30,9 @@ class EditNoteFSM(StatesGroup):
 
 class StartFSM(StatesGroup):
     name = State()
+    password = State()
+
+class GetListFSM(StatesGroup):
     password = State()
 
 class DelNoteFSM(StatesGroup):
@@ -52,9 +56,11 @@ async def decode_list(list):
 
 @dp.message(CommandStart())
 async def start_name_handler(message: Message, state: FSMContext):
-    await state.set_state(StartFSM.name)
     await message.reply(f"Здравствуйте, {message.from_user.username}, Этот бот создан для сохранения ваших заметок (а возможно и персональных данных 😉) в безопасности. Для ознакомления с командами пропишите /help \n\nАвтор: @soyaaa_l")
-    await message.answer(f"Введите имя, по которому можно к вам обращаться")
+    print(get_user(message.from_user.id))
+    if await get_user(message.from_user.id) == None:
+        await message.answer(f"Введите имя, по которому можно к вам обращаться")
+        await state.set_state(StartFSM.name)
 
 @dp.message(StartFSM.name)
 async def start_password_handler(message: Message, state: FSMContext):
@@ -89,6 +95,10 @@ async def cancel_handler(message: Message, state: FSMContext):
 @dp.message(Command("adddata"))
 async def adddata_start(message: Message, state: FSMContext):
     await state.set_state(AddNoteFSM.title)
+    if not await get_user(message.from_user.id):
+        await message.answer("У вас нет аккаунта, зарегестрируйтесь командой /start")
+        await state.clear()
+        return
     await message.answer("✏️ Введите название заметки (для отмены: /cancel):")
 
 
@@ -118,13 +128,25 @@ async def adddata_text(message: Message, state: FSMContext):
     await message.answer("✅ Заметка сохранена!")
 
 @dp.message(Command("getlist"))
-async def get_all(message: Message):
-    result = await(get_list(owner=message.from_user.id))
-    if not result:
-        await message.reply("У вас нет заметок")
+async def get_all_password_enter(message: Message, state: FSMContext):
+    await state.set_state(GetListFSM.password)
+    await message.answer("Введите пароль 🔒")
+
+@dp.message(GetListFSM.password)
+async def get_all(message: Message, state: FSMContext):
+    user = await get_user(message.from_user.id)
+    password_hash = user.password_hash
+    if await verify_password(message.text, password_hash):
+        result = await(get_list(owner=message.from_user.id))
+        if not result:
+            await message.reply("У вас нет заметок")
+            await state.clear()
+            return
+        for i in result:
+            await message.answer(f"<b>{cipher.decrypt(i[0]).decode(ENCODE)}</b>: {cipher.decrypt(i[1]).decode(ENCODE)}")
+    else:
+        await message.answer("Ещё раз")
         return
-    for i in result:
-        await message.answer(f"<b>{cipher.decrypt(i[0]).decode(ENCODE)}</b>: {cipher.decrypt(i[1]).decode(ENCODE)}")
 
 
 @dp.message(Command("delete"))
