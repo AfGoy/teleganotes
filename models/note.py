@@ -13,3 +13,4 @@ class Note(Base):
     owner = Column(String)
     title = Column(String)
     text = Column(String, nullable=False)
+    title_hash = Column(String)

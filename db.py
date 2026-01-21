@@ -7,12 +7,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import declarative_base
 
-from settings import DB_URL
+from settings import DB_URL, ENCODE
 from crypt import hash_password
 
 from base import Base
 from models.note import Note
 from models.users import User
+from crypt import cipher
 
 engine = create_async_engine(DB_URL)
 AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
@@ -43,11 +44,11 @@ async def get_user(tg_id):
         except SQLAlchemyError as e:
             return f"Произошла ошибка базы данных. {e}"
     
-async def add_note(note_text, title, owner):
+async def add_note(note_text, title, title_hash, owner):
     async with AsyncSessionLocal() as session:
         try:
             async with session.begin():
-                note = Note(owner=owner, title=title, text=note_text)
+                note = Note(owner=owner, title=title, text=note_text, title_hash=title_hash)
                 session.add(note)
             return "OK"
         
@@ -65,11 +66,11 @@ async def get_list(owner):
         except SQLAlchemyError as e:
             return f"Произошла ошибка базы данных. {e}"
         
-async def del_data(owner, title):
+async def del_data(owner, title_hash):
         async with AsyncSessionLocal() as session:
             try:
                 async with session.begin():  
-                    stmt = delete(Note).where(Note.owner == owner, Note.title == title)
+                    stmt = delete(Note).where(Note.owner == owner, Note.title_hash == title_hash)
                     result = await session.execute(stmt)
                     await session.commit()  
                 return "OK"
@@ -77,11 +78,11 @@ async def del_data(owner, title):
             except SQLAlchemyError as e:
                 return f"Произошла ошибка базы данных. {e}"
         
-async def edit_data(owner, title, new_text):
+async def edit_data(owner, title_hash, new_text):
         async with AsyncSessionLocal() as session:
             try:
                 async with session.begin():
-                    stmt = (update(Note).where(Note.owner == owner, Note.title == title).values(text=new_text))
+                    stmt = (update(Note).where(Note.owner == owner, Note.title_hash == title_hash).values(text=new_text))
                     result = await session.execute(stmt)
                 await session.commit()
 

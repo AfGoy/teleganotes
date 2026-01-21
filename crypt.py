@@ -1,4 +1,8 @@
 import bcrypt
+from cryptography.fernet import Fernet
+from settings import SECRET_KEY
+
+cipher = Fernet(SECRET_KEY)
 
 async def hash_password(password: str) -> str:
     salt = bcrypt.gensalt()

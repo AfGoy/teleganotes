@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+import hashlib
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -18,7 +19,7 @@ from db import init_db, add_note, get_list, del_data, edit_data, add_user, get_u
 from settings import TK, SECRET_KEY, ENCODE
 from crypt import hash_password, verify_password
 
-cipher = Fernet(SECRET_KEY)
+from crypt import cipher
 
 class AddNoteFSM(StatesGroup):
     title = State()
@@ -109,7 +110,7 @@ async def adddata_title(message: Message, state: FSMContext):
         await message.answer("Название не может быть пустым или повторяться. Введите ещё раз:")
         return
 
-    await state.update_data(title=cipher.encrypt(message.text.encode(ENCODE)))
+    await state.update_data(title=cipher.encrypt(message.text.encode(ENCODE)), title_hash=hashlib.sha256(message.text.encode(ENCODE)).hexdigest())
     await state.set_state(AddNoteFSM.text)
     await message.answer("📝 Теперь введите текст заметки:")
 
@@ -122,13 +123,16 @@ async def adddata_text(message: Message, state: FSMContext):
 
     data = await state.get_data()
 
-    await add_note(owner=message.from_user.id, title=data["title"], note_text=cipher.encrypt(message.text.encode(ENCODE)))
+    await add_note(owner=message.from_user.id, title=data["title"], title_hash=data["title_hash"], note_text=cipher.encrypt(message.text.encode(ENCODE)))
 
     await state.clear()
     await message.answer("✅ Заметка сохранена!")
 
 @dp.message(Command("getlist"))
 async def get_all_password_enter(message: Message, state: FSMContext):
+    if await get_user(message.from_user.id) == None:
+        await message.answer("Зарегестрируйтесь")
+        return
     await state.set_state(GetListFSM.password)
     await message.answer("Введите пароль 🔒")
 
@@ -144,28 +148,29 @@ async def get_all(message: Message, state: FSMContext):
             return
         for i in result:
             await message.answer(f"<b>{cipher.decrypt(i[0]).decode(ENCODE)}</b>: {cipher.decrypt(i[1]).decode(ENCODE)}")
+            await state.clear()
     else:
         await message.answer("Ещё раз")
         return
 
 
 @dp.message(Command("delete"))
-async def delete_handler(message: Message, state: FSMContext):
+async def delete_handler_title_enter(message: Message, state: FSMContext):
     await state.set_state(DelNoteFSM.title)
     await message.reply("Введите название удаляемой заметки (для отмены: /cancel)")
 
 
 @dp.message(DelNoteFSM.title)
-async def del_handler(message: Message, state: FSMContext):
-    titles = await(get_titles(owner=message.from_user.id))
-    print(titles)
-    print(message.text)
-    print(cipher.encrypt(message.text.encode(ENCODE)))
-    if not cipher.encrypt(message.text.encode(ENCODE)) or cipher.encrypt(message.text.encode(ENCODE)) not in titles:
+async def delete_handler(message: Message, state: FSMContext):
+    t = await(get_titles(owner=message.from_user.id))
+    titles = await decode_list(t)
+    if not message.text or message.text not in titles:
         await message.reply("Некоректное название")
         return
     
-    await del_data(owner=message.from_user.id, title=cipher.encrypt(message.text.encode(ENCODE)))
+    notes = await get_list(message.from_user.id)
+
+    await del_data(owner=message.from_user.id, title_hash=hashlib.sha256(message.text.encode(ENCODE)).hexdigest())
     
     await state.clear()
     await message.answer("✅ Заметка удалена!")
@@ -182,10 +187,10 @@ async def edit_handler_title(message: Message, state: FSMContext):
     titles = await decode_list(t)
     print(titles)
     if not message.text or message.text not in titles:
-        await message.reply("Некоректное название (Такой заметки нет или вы ввели название)")
+        await message.reply("Некоректное название (Такой заметки нет или вы не ввели название)")
         return
     
-    await state.update_data(title=cipher.encrypt(message.text.encode(ENCODE)))
+    await state.update_data(title_hash=hashlib.sha256(message.text.encode(ENCODE)).hexdigest())
     await state.set_state(EditNoteFSM.text)
     await message.answer("Теперь введите новый текст этой заметки (ВНИМАНИЕ: СТАРЫЙ ТЕКСТ ПОЛНОСТЬЮ ЗАМЕНИТСЯ НА НОВЫЙ! Для отмены /cancel):")
 
@@ -196,8 +201,7 @@ async def edit_handler_text(message: Message, state: FSMContext):
         return
     data = await state.get_data()
 
-    print(cipher.decrypt(data["title"]).decode(ENCODE))
-    await edit_data(owner=message.from_user.id, title=data["title"], new_text=cipher.encrypt(message.text.encode(ENCODE)))
+    await edit_data(owner=message.from_user.id, title_hash=data["title_hash"], new_text=cipher.encrypt(message.text.encode(ENCODE)))
 
     await state.clear()
     await message.answer("✅ Заметка изменена!")
