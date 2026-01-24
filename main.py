@@ -8,6 +8,9 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from cryptography.fernet import Fernet
 
@@ -55,13 +58,62 @@ async def decode_list(list):
         list_decoded.append(cipher.decrypt(coded).decode(ENCODE))
     return list_decoded
 
+user_tg_id = None
+
+async def start(message):
+    pass
+
 @dp.message(CommandStart())
-async def start_name_handler(message: Message, state: FSMContext):
-    await message.reply(f"Здравствуйте, {message.from_user.username}, Этот бот создан для сохранения ваших заметок (а возможно и персональных данных 😉) в безопасности. Для ознакомления с командами пропишите /help \n\nАвтор: @soyaaa_l")
-    print(get_user(message.from_user.id))
-    if await get_user(message.from_user.id) == None:
-        await message.answer(f"Введите имя, по которому можно к вам обращаться")
-        await state.set_state(StartFSM.name)
+async def start_handler(message: Message, state: FSMContext):
+        global user_tg_id
+        user_tg_id = message.from_user.id
+        kb = [
+            [InlineKeyboardButton(text="🔒 Регистрация", callback_data="reg_btn")],
+            [InlineKeyboardButton(text="👤 Профиль", callback_data="profile_btn")],
+            [InlineKeyboardButton(text="➕ Добавить", callback_data="add_note_btn")],
+            [InlineKeyboardButton(text="🗑 Удалить", callback_data="del_note_btn")],
+            [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_btn")],
+            [InlineKeyboardButton(text="📄 Все заметки", callback_data="getlist_btn")],
+        ]
+        keyboard = InlineKeyboardMarkup(inline_keyboard=kb)
+        await message.reply(f"Здравствуйте, {message.from_user.username}, Этот бот создан для сохранения ваших заметок (а возможно и персональных данных 😉) в безопасности. Для ознакомления с командами пропишите /help \n\nАвтор: @soyaaa_l", reply_markup=keyboard)
+
+
+@dp.callback_query()
+async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
+        if callback.data == "reg_btn":
+            print(await get_user(user_tg_id))
+            print(user_tg_id)
+            if await get_user(user_tg_id) == None:
+                await callback.message.answer(f"Введите имя, по которому можно к вам обращаться")
+                await state.set_state(StartFSM.name)
+            else:
+                await callback.message.answer(f"Уже зарегестрированы")
+                return
+        elif callback.data == "profile_btn":
+            user = await get_user(tg_id=user_tg_id)
+            notes = await get_list(user_tg_id)
+            await callback.message.answer(f"👤\nИмя - {user.name}\n\nКол-во заметок: {len(notes)}")
+        elif callback.data == "add_note_btn":
+            await state.set_state(AddNoteFSM.title)
+            if not await get_user(user_tg_id):
+                await callback.message.answer("У вас нет аккаунта, зарегестрируйтесь командой /start")
+                await state.clear()
+                return
+            await callback.message.answer("✏️ Введите название заметки (для отмены: /cancel):")
+        elif callback.data == "del_note_btn":
+            await state.set_state(DelNoteFSM.title)
+            await callback.message.answer("Введите название удаляемой заметки (для отмены: /cancel)")
+        elif callback.data == "edit_btn":
+            await state.set_state(EditNoteFSM.title)
+            await callback.message.answer("Введите название заметки, которую вы хотите отредактировать (для отмены: /cancel):")
+        elif callback.data == "getlist_btn":
+                if await get_user(user_tg_id) == None:
+                    await callback.message.answer("Зарегестрируйтесь")
+                    return
+                await state.set_state(GetListFSM.password)
+                await callback.message.answer("Введите пароль 🔒")
+        await callback.answer() 
 
 @dp.message(StartFSM.name)
 async def start_password_handler(message: Message, state: FSMContext):
@@ -81,6 +133,7 @@ async def final_start_handler(message: Message, state: FSMContext):
     data = await state.get_data()
     
     await state.clear()
+    await message.answer(f"Успешно!")
     await add_user(tg_id=message.from_user.id, name=data["name"], password=message.text)
 
 @dp.message(Command("cancel"))
@@ -177,7 +230,6 @@ async def delete_handler(message: Message, state: FSMContext):
 
 @dp.message(Command("edit"))
 async def edit_handler(message: Message, state: FSMContext):
-    print(1)
     await state.set_state(EditNoteFSM.title)
     await message.reply("Введите название заметки, которую вы хотите отредактировать (для отмены: /cancel):")
 
@@ -185,7 +237,6 @@ async def edit_handler(message: Message, state: FSMContext):
 async def edit_handler_title(message: Message, state: FSMContext):
     t = await(get_titles(owner=message.from_user.id))
     titles = await decode_list(t)
-    print(titles)
     if not message.text or message.text not in titles:
         await message.reply("Некоректное название (Такой заметки нет или вы не ввели название)")
         return
@@ -223,3 +274,5 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
+
+#TODO: Смена пороля, меню профиля, в старт месседже добавить маркап клавиатуру с функциями
