@@ -1,9 +1,4 @@
-from sqlalchemy import Column, Integer, String, select, func
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.ext.asyncio import async_sessionmaker
-from sqlalchemy.exc import SQLAlchemyError
-
+from sqlalchemy import Column, Integer, String, JSON
 from base import Base
 
 class Note(Base):
@@ -14,3 +9,8 @@ class Note(Base):
     title = Column(String)
     text = Column(String, nullable=False)
     title_hash = Column(String)
+    ids_notes_in_chat = Column(
+        JSON,
+        nullable=False,
+        default=list
+    )

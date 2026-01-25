@@ -1,6 +1,4 @@
-import asyncio
-
-from sqlalchemy import Column, Integer, String, select, func, update, delete
+from sqlalchemy import select, update, delete
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -54,12 +52,40 @@ async def add_note(note_text, title, title_hash, owner):
         
         except SQLAlchemyError as e:
             return f"Произошла ошибка при добавлении текста. {e}"
-        
+
+async def update_note(title_hash, owner, message_id):
+    async with AsyncSessionLocal() as session:
+        try:
+            async with session.begin():
+                stmt = select(Note).where(
+                    Note.owner == owner,
+                    Note.title_hash == title_hash
+                )
+                result = await session.execute(stmt)
+                note = result.scalar_one_or_none()
+
+                if not note:
+                    return
+
+                ids = note.ids_notes_in_chat or []
+                ids.append(message_id)
+
+                upd = (
+                    update(Note)
+                    .where(Note.id == note.id)
+                    .values(ids_notes_in_chat=ids)
+                )
+                await session.execute(upd)
+
+            return "✅ message_id добавлен"
+
+        except SQLAlchemyError as e:
+            return f"❌ Ошибка БД: {e}"
 
 async def get_list(owner):
     async with AsyncSessionLocal() as session:
         try:
-            stmt = select(Note.title, Note.text).where(Note.owner == owner)
+            stmt = select(Note.title, Note.text, Note.title_hash).where(Note.owner == owner)
             result = await session.execute(stmt)
             return result.all()
 

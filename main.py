@@ -3,125 +3,116 @@ import logging
 import sys
 import hashlib
 
-from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import WebAppInfo
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, WebAppInfo
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
-
-from cryptography.fernet import Fernet
-
-from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from db import init_db, add_note, get_list, del_data, edit_data, add_user, get_user, engine
-from settings import TK, SECRET_KEY, ENCODE
-from crypt import hash_password, verify_password
+from db import init_db, add_note, get_list, del_data, edit_data, add_user, get_user, update_note, engine
+from settings import TK, ENCODE, WEBAPP_URL
+from crypt import verify_password, cipher
+from states import *
+from functions import get_titles, decode_list
 
-from crypt import cipher
-
-class AddNoteFSM(StatesGroup):
-    title = State()
-    text = State()
-
-class EditNoteFSM(StatesGroup):
-    title = State()
-    text = State()
-
-class StartFSM(StatesGroup):
-    name = State()
-    password = State()
-
-class GetListFSM(StatesGroup):
-    password = State()
-
-class DelNoteFSM(StatesGroup):
-    title = State()
 
 dp = Dispatcher(storage=MemoryStorage())
 
 
-
-async def get_titles(owner):
-    titles = []
-    for i in await(get_list(owner)):
-        titles.append(i[0])
-    return titles
-
-async def decode_list(list):
-    list_decoded = []
-    for coded in list:
-        list_decoded.append(cipher.decrypt(coded).decode(ENCODE))
-    return list_decoded
-
 user_tg_id = None
+notes_ids = []
+
 
 async def start(message):
     global user_tg_id
     user_tg_id = message.from_user.id
-    kb = [
-        [InlineKeyboardButton(text="🔒 Регистрация", callback_data="reg_btn")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile_btn")],
-        [InlineKeyboardButton(text="➕ Добавить", callback_data="add_note_btn")],
-        [InlineKeyboardButton(text="🗑 Удалить", callback_data="del_note_btn")],
-        [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_btn")],
-        [InlineKeyboardButton(text="📄 Все заметки", callback_data="getlist_btn")],
-        [InlineKeyboardButton(text="❌ Очистить заметки из чата", callback_data="clear_btn")],
-    ]
+    user = await get_user(user_tg_id)
+    if user:
+        kb = [
+            [InlineKeyboardButton(text="👤 Профиль", callback_data="profile_btn")],
+            [InlineKeyboardButton(text="➕ Добавить", callback_data="add_note_btn")],
+            [InlineKeyboardButton(text="🗑 Удалить", callback_data="del_note_btn")],
+            [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_btn")],
+            [InlineKeyboardButton(text="📄 Все заметки", callback_data="getlist_btn")],
+            [InlineKeyboardButton(text="❌ Очистить заметки из чата", callback_data="clear_btn")],
+        ]
+    else:
+        kb = [[InlineKeyboardButton(text="🔒 Регистрация", callback_data="reg_btn")]]
     keyboard = InlineKeyboardMarkup(inline_keyboard=kb)
     await message.reply(f"Здравствуйте, {message.from_user.username}, Этот бот создан для сохранения ваших заметок (а возможно и персональных данных 😉) в безопасности. Для ознакомления с командами пропишите /help \n\nАвтор: @soyaaa_l", reply_markup=keyboard)
 
 
 @dp.message(CommandStart())
-async def start_handler(message: Message, state: FSMContext):
+async def start_handler(message: Message):
     await start(message=message)
 
 @dp.callback_query()
 async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
-        if callback.data == "reg_btn":
-            print(await get_user(user_tg_id))
-            print(user_tg_id)
-            if await get_user(user_tg_id) == None:
-                await callback.message.answer(f"Введите имя, по которому можно к вам обращаться")
+    match callback.data: 
+        case "reg_btn":
+            if await get_user(user_tg_id) is None:
+                await callback.message.answer("Введите имя, по которому можно к вам обращаться")
                 await state.set_state(StartFSM.name)
             else:
-                await callback.message.answer(f"Уже зарегестрированы")
+                await callback.message.answer("Уже зарегистрированы")
                 return
-        elif callback.data == "profile_btn":
+
+        case "profile_btn":
             user = await get_user(tg_id=user_tg_id)
             notes = await get_list(user_tg_id)
-            await callback.message.answer(f"👤\nИмя - {user.name}\n\nКол-во заметок: {len(notes)}")
-        elif callback.data == "add_note_btn":
+            await callback.message.answer(
+                f"👤\nИмя - {user.name}\n\nКол-во заметок: {len(notes)}"
+            )
+
+        case "add_note_btn":
             await state.set_state(AddNoteFSM.title)
             if not await get_user(user_tg_id):
-                await callback.message.answer("У вас нет аккаунта, зарегестрируйтесь командой /start")
+                await callback.message.answer(
+                    "У вас нет аккаунта, зарегистрируйтесь командой /start"
+                )
                 await state.clear()
                 return
-            await callback.message.answer("✏️ Введите название заметки (для отмены: /cancel):")
-        elif callback.data == "del_note_btn":
+            await callback.message.answer(
+                "✏️ Введите название заметки (для отмены: /cancel):"
+            )
+
+        case "del_note_btn":
             await state.set_state(DelNoteFSM.title)
-            await callback.message.answer("Введите название удаляемой заметки (для отмены: /cancel)")
-        elif callback.data == "edit_btn":
+            await callback.message.answer(
+                "Введите название удаляемой заметки (для отмены: /cancel)"
+            )
+
+        case "edit_btn":
             await state.set_state(EditNoteFSM.title)
-            await callback.message.answer("Введите название заметки, которую вы хотите отредактировать (для отмены: /cancel):")
-        elif callback.data == "getlist_btn":
-            if await get_user(user_tg_id) == None:
-                await callback.message.answer("Зарегестрируйтесь")
+            await callback.message.answer(
+                "Введите название заметки, которую вы хотите отредактировать (для отмены: /cancel):"
+            )
+
+        case "getlist_btn":
+            if await get_user(user_tg_id) is None:
+                await callback.message.answer("Зарегистрируйтесь")
                 return
+
             await state.set_state(GetListFSM.password)
             builder = ReplyKeyboardBuilder()
-            builder.add(types.KeyboardButton(text="🔐 Ввести пароль", web_app=WebAppInfo(url="https://niou.mooo.com/index.html")))
+            builder.add(
+                types.KeyboardButton(
+                    text="🔐 Ввести пароль",
+                    web_app=WebAppInfo(url=WEBAPP_URL)
+                )
+            )
             kb = builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
             await callback.message.answer("Введите пароль 🔒", reply_markup=kb)
-        elif callback.data == "clear_btn":
-            await callback.message.answer("Cooming Soon")
-        await callback.answer() 
+
+        case "clear_btn":
+            await callback.message.answer("Coming Soon")
+
+        case _:
+            pass
+    await callback.answer() 
 
 @dp.message(StartFSM.name)
 async def start_password_handler(message: Message, state: FSMContext):
@@ -185,9 +176,7 @@ async def adddata_text(message: Message, state: FSMContext):
         return
 
     data = await state.get_data()
-
     await add_note(owner=message.from_user.id, title=data["title"], title_hash=data["title_hash"], note_text=cipher.encrypt(message.text.encode(ENCODE)))
-
     await state.clear()
     await message.answer("✅ Заметка сохранена!")
     await start(message=message)
@@ -207,17 +196,18 @@ async def get_all(message: Message, state: FSMContext):
     password_hash = user.password_hash
     password = message.web_app_data.data
     if await verify_password(password, password_hash):
-        result = await(get_list(owner=message.from_user.id))
+        result = await get_list(owner=message.from_user.id)
         if not result:
             await message.reply("У вас нет заметок")
             await state.clear()
             return
         for i in result:
-            await message.answer(f"<b>{cipher.decrypt(i[0]).decode(ENCODE)}</b>: {cipher.decrypt(i[1]).decode(ENCODE)}")
-            await state.clear()
+            message_sended = await message.answer(f"<b>{cipher.decrypt(i[0]).decode(ENCODE)}</b>: {cipher.decrypt(i[1]).decode(ENCODE)}")
+            await update_note(owner=message.from_user.id, title_hash=i[2], message_id=message_sended.message_id)
     else:
         await message.answer("Ещё раз")
         return
+    await state.clear()
     await start(message=message)
 
 
@@ -234,11 +224,8 @@ async def delete_handler(message: Message, state: FSMContext):
     if not message.text or message.text not in titles:
         await message.reply("Некоректное название")
         return
-    
-    notes = await get_list(message.from_user.id)
 
     await del_data(owner=message.from_user.id, title_hash=hashlib.sha256(message.text.encode(ENCODE)).hexdigest())
-    
     await state.clear()
     await message.answer("✅ Заметка удалена!")
     await start(message=message)
@@ -279,10 +266,9 @@ async def help_handler(message: Message):
     await start(message=message)
 
 async def main() -> None:
-    await init_db()
-
-    bot = Bot(token=TK, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     try:
+        await init_db()
+        bot = Bot(token=TK, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         await dp.start_polling(bot)
     finally:
         await engine.dispose()
@@ -291,5 +277,3 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
-
-#TODO: Очитска сообщений с заметками по команде
