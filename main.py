@@ -2,21 +2,22 @@ import asyncio
 import logging
 import sys
 import hashlib
+import aiohttp
 
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, WebAppInfo
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from db import init_db, add_note, get_list, del_data, edit_data, add_user, get_user, update_note, engine
-from settings import TK, ENCODE, WEBAPP_URL
+from settings import TK, ENCODE, WEBAPP_URL, GROQ_API_KEY
 from crypt import verify_password, cipher
 from states import *
-from functions import get_titles, decode_list
+from functions import get_titles, decode_list, fetch_groq_data
 
 
 dp = Dispatcher(storage=MemoryStorage())
@@ -24,7 +25,7 @@ dp = Dispatcher(storage=MemoryStorage())
 
 user_tg_id = None
 notes_ids = []
-
+generated_text = ""
 
 async def start(message):
     global user_tg_id
@@ -44,12 +45,18 @@ async def start(message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=kb)
     await message.reply(f"Здравствуйте, {message.from_user.username}, Этот бот создан для сохранения ваших заметок (а возможно и персональных данных 😉) в безопасности. Для ознакомления с командами пропишите /help \n\nАвтор: @soyaaa_l", reply_markup=keyboard)
 
-
 @dp.message(CommandStart())
 async def start_handler(message: Message):
     await start(message=message)
 
-@dp.callback_query()
+@dp.callback_query(F.data.in_({
+    "profile_btn",
+    "add_note_btn",
+    "del_note_btn",
+    "edit_btn",
+    "getlist_btn",
+    "clear_btn",
+}))
 async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
     match callback.data: 
         case "reg_btn":
@@ -121,7 +128,7 @@ async def start_password_handler(message: Message, state: FSMContext):
         return
     await state.update_data(name=message.text)
     await message.answer(f"Теперь введите свой НАДЁЖНЫЙ пароль")
-    await state.set_state(StartFSM.password)
+    await state.set_state(StartFSM.password) ########################################################
 
 @dp.message(StartFSM.password)
 async def final_start_handler(message: Message, state: FSMContext):
@@ -165,9 +172,29 @@ async def adddata_title(message: Message, state: FSMContext):
         return
 
     await state.update_data(title=cipher.encrypt(message.text.encode(ENCODE)), title_hash=hashlib.sha256(message.text.encode(ENCODE)).hexdigest())
-    await state.set_state(AddNoteFSM.text)
-    await message.answer("📝 Теперь введите текст заметки:")
+    kb = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🤖 Сгенерировать текст", callback_data="generate_text_btn")],
+        [InlineKeyboardButton(text="✍️ Написать текст", callback_data="write_text_btn")]
+    ]
+    )
+    await message.answer("📝 Выберите опцию:", reply_markup=kb)
 
+@dp.callback_query(F.data.in_({
+    "generate_text_btn",
+    "write_text_btn",
+}))
+async def user_callback_handler(callback: types.CallbackQuery, state: FSMContext):
+    match callback.data: 
+        case "generate_text_btn":
+            await callback.message.answer("Введите промт для генерации текста:")
+            await state.set_state(AddNoteFSM.ai_text)
+        case "write_text_btn":
+            await callback.message.answer("Введите текст заметки:")
+            await state.set_state(AddNoteFSM.text)
+        case _:
+            pass
+    await callback.answer()
 
 @dp.message(AddNoteFSM.text)
 async def adddata_text(message: Message, state: FSMContext):
@@ -180,6 +207,41 @@ async def adddata_text(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ Заметка сохранена!")
     await start(message=message)
+
+@dp.message(AddNoteFSM.ai_text)
+async def adddata_ai_text(message: Message, state: FSMContext):
+    global generated_text
+    if not message.text or not message.text.strip():
+        await message.answer("Промт не может быть пустым. Введите ещё раз:")
+        return
+
+    data = await state.get_data()
+    generated_text = await fetch_groq_data(message.text)
+    kb = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="✅", callback_data="accept_btn")],
+        [InlineKeyboardButton(text="❌", callback_data="decline_btn")]
+    ]
+    )
+    await message.answer(f"Сгенерированный текст:\n\n{generated_text}\n\nЕсли вас устраивает сгенерированный текст, нажмите ✅, иначе ❌", reply_markup=kb)
+
+@dp.callback_query(F.data.in_({
+    "accept_btn",
+    "decline_btn",
+}))
+async def ai_text_callback_handler(callback: types.CallbackQuery, state: FSMContext):
+    match callback.data: 
+        case "accept_btn":
+            data = await state.get_data()
+            await add_note(owner=callback.from_user.id, title=data["title"], title_hash=data["title_hash"], note_text=cipher.encrypt(generated_text.encode(ENCODE)))
+            await state.clear()
+            await callback.message.answer("✅ Заметка сохранена!")
+            await start(message=user_tg_id)
+        case "decline_btn":
+            await callback.message.answer("Введите промт для генерации текста:")
+            await state.set_state(AddNoteFSM.ai_text)
+        case _:
+            pass
 
 @dp.message(Command("getlist"))
 async def get_all_password_enter(message: Message, state: FSMContext):
@@ -202,7 +264,7 @@ async def get_all(message: Message, state: FSMContext):
             await state.clear()
             return
         for i in result:
-            message_sended = await message.answer(f"<b>{cipher.decrypt(i[0]).decode(ENCODE)}</b>: {cipher.decrypt(i[1]).decode(ENCODE)}")
+            message_sended = await message.answer(f"<b>{cipher.decrypt(i[0]).decode(ENCODE)}</b>: {cipher.decrypt(i[1]).decode(ENCODE)}") ############################
             await update_note(owner=message.from_user.id, title_hash=i[2], message_id=message_sended.message_id)
     else:
         await message.answer("Ещё раз")

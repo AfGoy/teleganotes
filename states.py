@@ -4,6 +4,7 @@ from aiogram.fsm.state import StatesGroup, State
 class AddNoteFSM(StatesGroup):
     title = State()
     text = State()
+    ai_text = State()
 
 class EditNoteFSM(StatesGroup):
     title = State()
