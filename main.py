@@ -56,6 +56,7 @@ async def start_handler(message: Message):
     "edit_btn",
     "getlist_btn",
     "clear_btn",
+    "reg_btn"
 }))
 async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
     match callback.data: 
