@@ -202,21 +202,23 @@ async def adddata_title(message: Message, state: FSMContext):
     "write_text_btn",
 }))
 async def user_callback_handler(callback: types.CallbackQuery, state: FSMContext):
-    match callback.data: 
+    current_state = await state.get_state()
+
+    match callback.data:
         case "generate_text_btn":
-            if state.get_state == "AddNoteFSM:title":
+            if current_state == AddNoteFSM.title:
                 await callback.message.answer("Введите промт для генерации текста:")
                 await state.set_state(AddNoteFSM.ai_text)
             else:
                 await callback.message.answer("Неверное состояние")
+
         case "write_text_btn":
-            if state.get_state == "AddNoteFSM:title":
+            if current_state == AddNoteFSM.title:
                 await callback.message.answer("Введите текст заметки:")
                 await state.set_state(AddNoteFSM.text)
             else:
                 await callback.message.answer("Неверное состояние")
-        case _:
-            pass
+
     await callback.answer()
 
 @dp.message(AddNoteFSM.text)
@@ -254,17 +256,25 @@ async def adddata_ai_text(message: Message, state: FSMContext):
     "decline_btn",
 }))
 async def ai_text_callback_handler(callback: types.CallbackQuery, state: FSMContext):
+    current_state = await state.get_state()
+
     match callback.data: 
         case "accept_btn":
-            data = await state.get_data()
-            await add_note(owner=callback.from_user.id, title=data["title"], title_hash=data["title_hash"], note_text=cipher.encrypt(data["generated_text"].encode(ENCODE)))
-            await state.clear()
-            await callback.message.answer("✅ Заметка сохранена!")
+            if current_state == AddNoteFSM.title:
+                data = await state.get_data()
+                await add_note(owner=callback.from_user.id, title=data["title"], title_hash=data["title_hash"], note_text=cipher.encrypt(data["generated_text"].encode(ENCODE)))
+                await state.clear()
+                await callback.message.answer("✅ Заметка сохранена!")
+            else:
+                await callback.message.answer("Неверное состояние")
 
             await start(message=callback.message, user_tg_id=callback.from_user.id)
         case "decline_btn":
-            await callback.message.answer("Введите промт для генерации текста:")
-            await state.set_state(AddNoteFSM.ai_text)
+            if current_state == AddNoteFSM.title:
+                await callback.message.answer("Введите промт для генерации текста:")
+                await state.set_state(AddNoteFSM.ai_text)
+            else:
+                await callback.message.answer("Неверное состояние")
         case _:
             pass
 
@@ -274,8 +284,15 @@ async def get_all_password_enter(message: Message, state: FSMContext):
         await message.answer("Зарегестрируйтесь")
         return
     await state.set_state(GetListFSM.password)
-
-    await message.answer("Введите пароль 🔒")
+    builder = ReplyKeyboardBuilder()
+    builder.add(
+        types.KeyboardButton(
+            text="🔐 Ввести пароль",
+            web_app=WebAppInfo(url=WEBAPP_URL)
+        )
+    )
+    kb = builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
+    await message.answer("Введите пароль 🔒", reply_markup=kb)
 
 @dp.message(GetListFSM.password)
 async def get_all(message: Message, state: FSMContext):
@@ -292,7 +309,7 @@ async def get_all(message: Message, state: FSMContext):
             message_sended = await message.answer(f"<b>{cipher.decrypt(i[0]).decode(ENCODE)}</b>: {cipher.decrypt(i[1]).decode(ENCODE)}")
             await update_note(owner=message.from_user.id, title_hash=i[2], message_id=message_sended.message_id)
     else:
-        await message.answer("Ещё раз")
+        await message.answer("Неверный пароль. Введите ещё раз")
         return
     await state.clear()
     await start(message=message, user_tg_id=message.from_user.id)
@@ -309,7 +326,7 @@ async def delete_handler(message: Message, state: FSMContext):
     t = await(get_titles(owner=message.from_user.id))
     titles = await decode_list(t)
     if not message.text or message.text not in titles:
-        await message.reply("Некоректное название")
+        await message.reply("Некорректное название")
         return
 
     await del_data(owner=message.from_user.id, title_hash=hashlib.sha256(message.text.encode(ENCODE)).hexdigest())
