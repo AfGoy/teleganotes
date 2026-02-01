@@ -2,7 +2,7 @@ import asyncio
 import logging
 import sys
 import hashlib
-import aiohttp
+import json
 
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -14,22 +14,20 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from db import init_db, add_note, get_list, del_data, edit_data, add_user, get_user, update_note, engine
-from settings import TK, ENCODE, WEBAPP_URL, GROQ_API_KEY
+from settings import TK, ENCODE, WEBAPP_URL, GROQ_API_KEY, AI_URL, AI_GENERATE_ROUTER, JSON_PROMT_FILENAME
 from crypt import verify_password, cipher
 from states import *
-from functions import get_titles, decode_list, fetch_groq_data
-
+from functions import get_titles, decode_list, get_payload_from_json
+from client import Client
 
 dp = Dispatcher(storage=MemoryStorage())
+client_ai = Client(AI_URL, GROQ_API_KEY)
 
 
-user_tg_id = None
 notes_ids = []
 generated_text = ""
 
-async def start(message):
-    global user_tg_id
-    user_tg_id = message.from_user.id
+async def start(message, user_tg_id=None):
     user = await get_user(user_tg_id)
     if user:
         kb = [
@@ -47,7 +45,7 @@ async def start(message):
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
-    await start(message=message)
+    await start(message=message, user_tg_id=message.from_user.id)
 
 @dp.callback_query(F.data.in_({
     "profile_btn",
@@ -61,7 +59,7 @@ async def start_handler(message: Message):
 async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
     match callback.data: 
         case "reg_btn":
-            if await get_user(user_tg_id) is None:
+            if await get_user(callback.from_user.id) is None:
                 await callback.message.answer("Введите имя, по которому можно к вам обращаться")
                 await state.set_state(StartFSM.name)
             else:
@@ -69,15 +67,15 @@ async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
                 return
 
         case "profile_btn":
-            user = await get_user(tg_id=user_tg_id)
-            notes = await get_list(user_tg_id)
+            user = await get_user(tg_id=callback.from_user.id)
+            notes = await get_list(callback.from_user.id)
             await callback.message.answer(
                 f"👤\nИмя - {user.name}\n\nКол-во заметок: {len(notes)}"
             )
 
         case "add_note_btn":
             await state.set_state(AddNoteFSM.title)
-            if not await get_user(user_tg_id):
+            if not await get_user(callback.from_user.id):
                 await callback.message.answer(
                     "У вас нет аккаунта, зарегистрируйтесь командой /start"
                 )
@@ -100,7 +98,7 @@ async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
             )
 
         case "getlist_btn":
-            if await get_user(user_tg_id) is None:
+            if await get_user(callback.from_user.id) is None:
                 await callback.message.answer("Зарегистрируйтесь")
                 return
 
@@ -142,7 +140,7 @@ async def final_start_handler(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(f"Успешно!")
     await add_user(tg_id=message.from_user.id, name=data["name"], password=message.text)
-    await start(message=message)
+    await start(message=message, user_tg_id=message.from_user.id)
 
 @dp.message(Command("cancel"))
 async def cancel_handler(message: Message, state: FSMContext):
@@ -153,7 +151,7 @@ async def cancel_handler(message: Message, state: FSMContext):
     
     await state.clear()
     await message.answer("✅ Действие отменено.")
-    await start(message=message)
+    await start(message=message, user_tg_id=message.from_user.id)
 
 @dp.message(Command("adddata"))
 async def adddata_start(message: Message, state: FSMContext):
@@ -207,17 +205,18 @@ async def adddata_text(message: Message, state: FSMContext):
     await add_note(owner=message.from_user.id, title=data["title"], title_hash=data["title_hash"], note_text=cipher.encrypt(message.text.encode(ENCODE)))
     await state.clear()
     await message.answer("✅ Заметка сохранена!")
-    await start(message=message)
+    await start(message=message, user_tg_id=message.from_user.id)
 
 @dp.message(AddNoteFSM.ai_text)
 async def adddata_ai_text(message: Message, state: FSMContext):
-    global generated_text
     if not message.text or not message.text.strip():
         await message.answer("Промт не может быть пустым. Введите ещё раз:")
         return
 
-    data = await state.get_data()
-    generated_text = await fetch_groq_data(message.text)
+    payload = get_payload_from_json(JSON_PROMT_FILENAME)
+    payload["messages"][1]["content"] = message.text
+    generated_text = await client_ai.post(AI_GENERATE_ROUTER, payload=payload)
+    await state.update_data(generated_text=generated_text)
     kb = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="✅", callback_data="accept_btn")],
@@ -234,10 +233,11 @@ async def ai_text_callback_handler(callback: types.CallbackQuery, state: FSMCont
     match callback.data: 
         case "accept_btn":
             data = await state.get_data()
-            await add_note(owner=callback.from_user.id, title=data["title"], title_hash=data["title_hash"], note_text=cipher.encrypt(generated_text.encode(ENCODE)))
+            await add_note(owner=callback.from_user.id, title=data["title"], title_hash=data["title_hash"], note_text=cipher.encrypt(data["generated_text"].encode(ENCODE)))
             await state.clear()
             await callback.message.answer("✅ Заметка сохранена!")
-            await start(message=user_tg_id)
+
+            await start(message=callback.message, user_tg_id=callback.from_user.id)
         case "decline_btn":
             await callback.message.answer("Введите промт для генерации текста:")
             await state.set_state(AddNoteFSM.ai_text)
@@ -271,7 +271,7 @@ async def get_all(message: Message, state: FSMContext):
         await message.answer("Ещё раз")
         return
     await state.clear()
-    await start(message=message)
+    await start(message=message, user_tg_id=message.from_user.id)
 
 
 @dp.message(Command("delete"))
@@ -291,7 +291,7 @@ async def delete_handler(message: Message, state: FSMContext):
     await del_data(owner=message.from_user.id, title_hash=hashlib.sha256(message.text.encode(ENCODE)).hexdigest())
     await state.clear()
     await message.answer("✅ Заметка удалена!")
-    await start(message=message)
+    await start(message=message, user_tg_id=message.from_user.id)
 
 @dp.message(Command("edit"))
 async def edit_handler(message: Message, state: FSMContext):
@@ -321,12 +321,12 @@ async def edit_handler_text(message: Message, state: FSMContext):
 
     await state.clear()
     await message.answer("✅ Заметка изменена!")
-    await start(message=message)
+    await start(message=message, user_tg_id=message.from_user.id)
 
 @dp.message(Command("help"))
 async def help_handler(message: Message):
     await message.answer("<b>/adddata</b> - Добавить заметку\n<b>/getlist</b> - Получить все свои заметки\n<b>/edit</b> - Перезаписать данные заметки\n<b>/delete</b> - Удалить заметку\n<b>/cancel</b> - Отменить диалог")
-    await start(message=message)
+    await start(message=message, user_tg_id=message.from_user.id)
 
 async def main() -> None:
     try:
