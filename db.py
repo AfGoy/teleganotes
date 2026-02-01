@@ -85,7 +85,7 @@ async def update_note(title_hash, owner, message_id):
 async def get_list(owner):
     async with AsyncSessionLocal() as session:
         try:
-            stmt = select(Note.title, Note.text, Note.title_hash).where(Note.owner == owner)
+            stmt = select(Note.title, Note.text, Note.title_hash, Note.ids_notes_in_chat).where(Note.owner == owner)
             result = await session.execute(stmt)
             return result.all()
 

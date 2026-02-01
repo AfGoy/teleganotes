@@ -114,7 +114,25 @@ async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
             await callback.message.answer("Введите пароль 🔒", reply_markup=kb)
 
         case "clear_btn":
-            await callback.message.answer("Coming Soon")
+            notes = await get_list(owner=callback.from_user.id)
+
+            for note in notes:
+                ids = note[3]
+
+                if not ids:
+                    continue
+
+                for msg_id in ids:
+                    if not isinstance(msg_id, int):
+                        continue
+
+                    try:
+                        await callback.bot.delete_message(
+                            chat_id=callback.message.chat.id,
+                            message_id=msg_id
+                        )
+                    except Exception:
+                        pass
 
         case _:
             pass
@@ -127,7 +145,7 @@ async def start_password_handler(message: Message, state: FSMContext):
         return
     await state.update_data(name=message.text)
     await message.answer(f"Теперь введите свой НАДЁЖНЫЙ пароль")
-    await state.set_state(StartFSM.password) ########################################################
+    await state.set_state(StartFSM.password)
 
 @dp.message(StartFSM.password)
 async def final_start_handler(message: Message, state: FSMContext):
@@ -186,11 +204,17 @@ async def adddata_title(message: Message, state: FSMContext):
 async def user_callback_handler(callback: types.CallbackQuery, state: FSMContext):
     match callback.data: 
         case "generate_text_btn":
-            await callback.message.answer("Введите промт для генерации текста:")
-            await state.set_state(AddNoteFSM.ai_text)
+            if state.get_state == "AddNoteFSM:title":
+                await callback.message.answer("Введите промт для генерации текста:")
+                await state.set_state(AddNoteFSM.ai_text)
+            else:
+                await callback.message.answer("Неверное состояние")
         case "write_text_btn":
-            await callback.message.answer("Введите текст заметки:")
-            await state.set_state(AddNoteFSM.text)
+            if state.get_state == "AddNoteFSM:title":
+                await callback.message.answer("Введите текст заметки:")
+                await state.set_state(AddNoteFSM.text)
+            else:
+                await callback.message.answer("Неверное состояние")
         case _:
             pass
     await callback.answer()
@@ -265,7 +289,7 @@ async def get_all(message: Message, state: FSMContext):
             await state.clear()
             return
         for i in result:
-            message_sended = await message.answer(f"<b>{cipher.decrypt(i[0]).decode(ENCODE)}</b>: {cipher.decrypt(i[1]).decode(ENCODE)}") ############################
+            message_sended = await message.answer(f"<b>{cipher.decrypt(i[0]).decode(ENCODE)}</b>: {cipher.decrypt(i[1]).decode(ENCODE)}")
             await update_note(owner=message.from_user.id, title_hash=i[2], message_id=message_sended.message_id)
     else:
         await message.answer("Ещё раз")
