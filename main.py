@@ -258,25 +258,39 @@ async def adddata_ai_text(message: Message, state: FSMContext):
 async def ai_text_callback_handler(callback: types.CallbackQuery, state: FSMContext):
     current_state = await state.get_state()
 
-    match callback.data: 
+    match callback.data:
         case "accept_btn":
-            if current_state == AddNoteFSM.title:
+            if current_state == AddNoteFSM.ai_text:
                 data = await state.get_data()
-                await add_note(owner=callback.from_user.id, title=data["title"], title_hash=data["title_hash"], note_text=cipher.encrypt(data["generated_text"].encode(ENCODE)))
+                gen = data.get("generated_text")
+                if not gen:
+                    await callback.message.answer("Нет сгенерированного текста. Попробуйте снова.")
+                    await callback.answer()
+                    return
+
+                await add_note(
+                    owner=callback.from_user.id,
+                    title=data["title"],
+                    title_hash=data["title_hash"],
+                    note_text=cipher.encrypt(gen.encode(ENCODE)),
+                )
                 await state.clear()
                 await callback.message.answer("✅ Заметка сохранена!")
+                await start(message=callback.message, user_tg_id=callback.from_user.id)
             else:
                 await callback.message.answer("Неверное состояние")
 
-            await start(message=callback.message, user_tg_id=callback.from_user.id)
         case "decline_btn":
-            if current_state == AddNoteFSM.title:
+            if current_state == AddNoteFSM.ai_text:
                 await callback.message.answer("Введите промт для генерации текста:")
                 await state.set_state(AddNoteFSM.ai_text)
             else:
                 await callback.message.answer("Неверное состояние")
+
         case _:
             pass
+
+    await callback.answer()
 
 @dp.message(Command("getlist"))
 async def get_all_password_enter(message: Message, state: FSMContext):
@@ -292,7 +306,7 @@ async def get_all_password_enter(message: Message, state: FSMContext):
         )
     )
     kb = builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
-    await message.answer("Введите пароль 🔒", reply_markup=kb)
+    await message.answer("Введите пароль через WebApp 🔒", reply_markup=kb)
 
 @dp.message(GetListFSM.password)
 async def get_all(message: Message, state: FSMContext):
