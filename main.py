@@ -206,7 +206,7 @@ async def user_callback_handler(callback: types.CallbackQuery, state: FSMContext
 
     match callback.data:
         case "generate_text_btn":
-            if current_state == AddNoteFSM.title:
+            if current_state == AddNoteFSM.title or current_state == AddNoteFSM.ai_text:
                 await callback.message.answer("Введите промт для генерации текста:")
                 await state.set_state(AddNoteFSM.ai_text)
             else:
