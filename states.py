@@ -6,16 +6,20 @@ class AddNoteFSM(StatesGroup):
     text = State()
     ai_text = State()
 
+
 class EditNoteFSM(StatesGroup):
     title = State()
     text = State()
+
 
 class StartFSM(StatesGroup):
     name = State()
     password = State()
 
+
 class GetListFSM(StatesGroup):
     password = State()
+
 
 class DelNoteFSM(StatesGroup):
     title = State()

@@ -21,6 +21,7 @@ pycparser==2.23
 pydantic==2.12.5
 pydantic_core==2.41.5
 python-dotenv==1.2.1
+ruff==0.15.0
 SQLAlchemy==2.0.45
 typing-inspection==0.4.2
 typing_extensions==4.15.0
